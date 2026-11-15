@@ -504,7 +504,7 @@
   const clone = o => JSON.parse(JSON.stringify(o));
   const SYNC_TXT = { local:'Saved on this device', loading:'Connecting…', live:'Live · view only',
     saving:'Saving…', saved:'Saved · live for the team', offline:'Offline · will sync when back online',
-    denied:'This Google account can’t edit', setup:'Not connected to Firebase yet' };
+    denied:'This Google account can’t edit · tap Sign out to switch', setup:'Not connected to Firebase yet' };
   function setSync(st){ const el=document.getElementById('syncDot'); if(!el) return; el.dataset.s=st; el.textContent=SYNC_TXT[st]||''; }
   const isRO = () => FB.on && !FB.editor;
   function applyRO(){
@@ -592,7 +592,9 @@
       // check this account is allowed to write (security rules decide)
       FB.db.doc('meta/ping').set({ at:Date.now() })
         .then(()=>{ FB.editor=true; FB.seen={state:-1,live:-1}; applyRO(); render(); setSync('saved'); cloudPush(); })
-        .catch(()=>{ FB.editor=false; applyRO(); render(); setSync('denied'); });
+        .catch(e=>{ FB.editor=false; applyRO(); render(); setSync('denied');
+          const em=(u.email||'(no email)');
+          ask('This account can’t edit', 'You’re signed in as '+em+'. In Firebase → Firestore → Rules, the email list must contain exactly this address (same spelling, lowercase), then Publish and reload.'+(e&&e.code&&e.code!=='permission-denied'?' ['+e.code+']':''), 'OK', ()=>{}); });
       applyRO();
     });
     listen();
