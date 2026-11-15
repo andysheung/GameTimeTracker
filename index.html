@@ -604,7 +604,15 @@
     const prov=new firebase.auth.GoogleAuthProvider();
     FB.auth.signInWithPopup(prov).catch(err=>{
       if (err && /popup|operation-not-supported/.test(err.code||'')) FB.auth.signInWithRedirect(prov);
-      else toast('Sign-in failed. Try again.');
+      else {
+        const c=(err&&err.code)||'';
+        const why = /configuration-not-found|operation-not-allowed/.test(c) ? 'Google sign-in isn’t turned on in Firebase Authentication.'
+          : /unauthorized-domain/.test(c) ? 'Add '+location.hostname+' to Firebase → Authentication → Authorized domains.'
+          : /network/.test(c) ? 'No connection. Try again when online.'
+          : /cancelled|closed-by-user/.test(c) ? 'Sign-in was cancelled.'
+          : 'Sign-in failed ('+(c||'unknown')+').';
+        ask('Couldn’t sign in', why, 'OK', ()=>{});
+      }
     });
   });
   window.addEventListener('online', ()=>{ if (FB.on) setSync(FB.editor?(FB.pending?'saving':'saved'):'live'); });
