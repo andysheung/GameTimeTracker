@@ -199,6 +199,20 @@
   body.ro .sq:hover{background:var(--canvas);border-color:var(--rule);border-left-color:var(--steel)}
   body.ro .sq:hover .num{color:var(--steel)}
 
+  .gts{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+  .gts th{font:500 11px/1.5 var(--sans);color:var(--steel);text-transform:uppercase;letter-spacing:.04em;padding:6px 4px;border-bottom:1px solid var(--ink-border)}
+  .gts td{padding:6px 4px;border-bottom:1px solid var(--ink-border)}
+  .gts td.b{font-weight:700;color:var(--c-played)}
+  .gts tr.zero td{color:var(--steel)}
+  .gts .tg{display:inline-block;margin-left:6px;font:700 9px/1.6 var(--sans);padding:0 4px;border-radius:3px;background:var(--rule);color:var(--white);vertical-align:1px}
+  .gts .st{margin-left:6px;font-size:11px;color:var(--steel)}
+  .sublog li{flex-direction:column;align-items:stretch;gap:4px}
+  .sublog .sw{display:flex;gap:8px;font-size:12px;color:var(--steel);font-variant-numeric:tabular-nums}
+  .sublog .sw .no{color:var(--white);font-weight:500}
+  .sublog .sp{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
+  .sublog .arr{color:var(--steel)}
+  .sublog .dur{font-size:11px;color:var(--steel);margin-left:6px;font-variant-numeric:tabular-nums}
+
   /* right pane: pending subs */
   .pane{position:fixed;top:0;right:0;bottom:0;width:var(--paneW);background:var(--charcoal);border-left:1px solid var(--ink-border);
     display:none;flex-direction:column;padding:16px 12px calc(12px + env(safe-area-inset-bottom));z-index:5}
@@ -772,20 +786,32 @@
     if (g.runningSince){ commit(g); g.runningSince=null; } else { g.runningSince=now(); }
     save(); render();
   };
+  // per-half record: each player's cumulative minutes and the half's length when it ended
+  function snapHalf(g){
+    g.halfSnap=g.halfSnap||{}; g.halfLen=g.halfLen||{};
+    const m={}; for (const pid in g.players) m[pid]=g.players[pid].ms;
+    g.halfSnap[g.half]=m; g.halfLen[g.half]=g.clockMs-g.halfStartMs;
+  }
   $('halfBtn').onclick = ()=>{
     const g=S.game;
     if (g.half>=g.halves){ $('endBtn').click(); return; }
     ask('End '+ord(g.half)+' half?','Clock stops. Make any half-time subs, then kick off the '+ord(g.half+1)+' half.','End half',()=>{
-      commit(g); g.runningSince=null; g.half++; g.halfStartMs=g.clockMs;
-      for (const pid in g.players) if (g.players[pid].field) g.players[pid].stintStart=g.clockMs;
+      commit(g); g.runningSince=null; snapHalf(g); g.half++; g.halfStartMs=g.clockMs;
       save(); render();
     });
   };
   $('endBtn').onclick = ()=>ask('End game?','Minutes get saved to season totals. You can view them and the subs on the History tab.','End game',()=>{
-    const g=S.game; commit(g); g.runningSince=null; g.ended=true;
-    const rec={ id:g.id, date:g.date, opp:g.opp, totalMs:g.clockMs, mins:{}, formation:g.formation,
-      starters:(g.startIds||[]).map(pName), subs:(g.log||[]).map(x=>({half:x.half, at:x.at, out:x.outName, in:x.inName})) };
-    for (const pid in g.players) rec.mins[pid]={ ms:g.players[pid].ms, name:pName(pid) };
+    const g=S.game; commit(g); g.runningSince=null; g.ended=true; snapHalf(g);
+    const log=g.log||[], halves=Object.keys(g.halfSnap).map(Number).sort((a,b)=>a-b);
+    const rec={ id:g.id, date:g.date, opp:g.opp, totalMs:g.clockMs, mins:{}, formation:g.formation, endWall:Date.now(),
+      halfLen:halves.map(h=>g.halfLen[h]||0),
+      starters:(g.startIds||[]).map(pName),
+      subs:log.map(x=>({half:x.half, at:x.at, gameAt:x.gameAt, wall:x.wall, out:x.outName, in:x.inName, outStint:x.outStint, inBench:x.inBench})) };
+    for (const pid in g.players){
+      let prev=0; const byHalf=halves.map(h=>{ const v=(g.halfSnap[h][pid]||0); const d=v-prev; prev=v; return Math.max(0,d); });
+      const stints=((g.startIds||[]).includes(pid)?1:0)+log.filter(x=>x.in===pid).length;
+      rec.mins[pid]={ ms:g.players[pid].ms, name:pName(pid), halves:byHalf, stints, start:(g.startIds||[]).includes(pid) };
+    }
     S.roster.forEach(r=>r.here=true);
     S.history.unshift(rec); S.lastGame=rec; S.game=null; save(); view='summary'; render();
   });
@@ -854,7 +880,8 @@
     ensureSlots(g);
     if (!g.log) g.log=[];
     g.pend.forEach(x=>{
-      g.log.push({ half:g.half, at:g.clockMs-g.halfStartMs, out:x.out, in:x.in, outName:pName(x.out), inName:pName(x.in) });
+      g.log.push({ half:g.half, at:g.clockMs-g.halfStartMs, gameAt:g.clockMs, wall:Date.now(), out:x.out, in:x.in, outName:pName(x.out), inName:pName(x.in),
+        outStint:g.clockMs-g.players[x.out].stintStart, inBench:g.clockMs-(g.players[x.in].benchStart||0), outPlayed:g.players[x.out].ms });
       const sl=slotOf(g,x.out);
       if (sl) g.slots[sl]=x.in; else g.extra=g.extra.filter(id=>id!==x.out).concat(x.in);
       g.players[x.out].field=false; g.players[x.out].benchStart=g.clockMs;
@@ -1026,21 +1053,39 @@
         const hd=document.createElement('h4'); hd.textContent='Starters'+(g.formation?' · '+g.formation:''); body.appendChild(hd);
         const st=document.createElement('div'); st.className='small'; st.textContent=g.starters.join(', '); body.appendChild(st);
       }
-      const hs=document.createElement('h4'); hs.textContent='Substitutions'; body.appendChild(hs);
+      // 1. game time summary
+      const hm=document.createElement('h4'); hm.textContent='Game time summary'; body.appendChild(hm);
+      const hl=g.halfLen||null;
+      const info=document.createElement('div'); info.className='small muted'; info.style.marginBottom='6px';
+      info.textContent=(hl?hl.map((v,k)=>ord(k+1)+' half '+fmt(v)).join(' · ')+' · ':'')+'Total '+fmt(g.totalMs);
+      body.appendChild(info);
+      const rows=Object.values(g.mins).sort((a,b)=>b.ms-a.ms);
+      const hasH=rows.some(m=>Array.isArray(m.halves)) && hl;
+      const tb=document.createElement('table'); tb.className='gts';
+      tb.innerHTML='<thead><tr><th>Player</th>'+(hasH?hl.map((_,k)=>'<th class="r">'+ord(k+1)+'</th>').join(''):'')+'<th class="r">Total</th><th class="r">%</th></tr></thead><tbody></tbody>';
+      rows.forEach(m=>{ const tr=document.createElement('tr');
+        const pct=g.totalMs?Math.round(m.ms/g.totalMs*100):0;
+        tr.innerHTML='<td><span class="pn"></span>'+(m.start?'<span class="tg">S</span>':'')+(m.stints>1?'<span class="st">×'+m.stints+'</span>':'')+'</td>'
+          +(hasH?hl.map((_,k)=>'<td class="r">'+fmt((m.halves||[])[k]||0)+'</td>').join(''):'')
+          +'<td class="r b">'+fmt(m.ms)+'</td><td class="r">'+pct+'%</td>';
+        tr.querySelector('.pn').textContent=m.name; if(!m.ms) tr.classList.add('zero'); tb.querySelector('tbody').appendChild(tr); });
+      body.appendChild(tb);
+      if (hasH){ const k=document.createElement('div'); k.className='small muted'; k.style.marginTop='4px'; k.textContent='S = started · ×2 = went on twice'; body.appendChild(k); }
+
+      // 2. every substitution: when, who out, who in
+      const hs=document.createElement('h4'); hs.textContent='Substitutions'+(subs&&subs.length?' ('+subs.length+')':''); body.appendChild(hs);
       if (!subs){ const m=document.createElement('div'); m.className='muted small'; m.textContent='Not recorded for this game.'; body.appendChild(m); }
       else if (!subs.length){ const m=document.createElement('div'); m.className='muted small'; m.textContent='No subs made.'; body.appendChild(m); }
       else {
         const ul=document.createElement('ul'); ul.className='sublog';
-        subs.forEach(x=>{ const li=document.createElement('li');
-          li.innerHTML=`<span class="when">${ord(x.half)} ${fmt(x.at)}</span><span><span class="o">OUT</span><span class="a"></span></span><span><span class="i">IN</span><span class="b"></span></span>`;
-          li.querySelector('.a').textContent=x.out; li.querySelector('.b').textContent=x.in; ul.appendChild(li); });
+        subs.forEach((x,n)=>{ const li=document.createElement('li');
+          const when=ord(x.half)+' half '+fmt(x.at)+(x.gameAt!=null?' · game '+fmt(x.gameAt):'')+(x.wall?' · '+new Date(x.wall).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'}):'');
+          li.innerHTML='<div class="sw"><span class="no">#'+(n+1)+'</span><span class="w"></span></div>'
+            +'<div class="sp"><span><span class="o">OUT</span><span class="a"></span>'+(x.outStint!=null?'<span class="dur">on '+fmt(x.outStint)+'</span>':'')+'</span>'
+            +'<span class="arr">→</span><span><span class="i">IN</span><span class="b"></span>'+(x.inBench!=null?'<span class="dur">sat '+fmt(x.inBench)+'</span>':'')+'</span></div>';
+          li.querySelector('.w').textContent=when; li.querySelector('.a').textContent=x.out; li.querySelector('.b').textContent=x.in; ul.appendChild(li); });
         body.appendChild(ul);
       }
-      const hm=document.createElement('h4'); hm.textContent='Minutes played'; body.appendChild(hm);
-      const mg=document.createElement('div'); mg.className='mins';
-      Object.values(g.mins).sort((a,b)=>b.ms-a.ms).forEach(m=>{ const a=document.createElement('span'); a.textContent=m.name;
-        const b=document.createElement('span'); b.textContent=mins(m.ms)+' min'; mg.append(a,b); });
-      body.appendChild(mg);
       const hb=document.createElement('div'); hb.className='hbtns';
       const cp=document.createElement('button'); cp.className='cp'; cp.textContent='Copy game';
       cp.onclick=()=>copyText(gameText(g), 'Game copied');
@@ -1058,18 +1103,20 @@
   function gameText(g){
     let t = dstr(g.date)+(g.opp?' vs '+g.opp:'')+' · game time '+fmt(g.totalMs)+(g.formation?' · '+g.formation:'')+'\n';
     if (g.starters && g.starters.length) t += 'Starters: '+g.starters.join(', ')+'\n';
-    if (g.subs){ t += 'Subs:'+(g.subs.length?'':' none')+'\n'; g.subs.forEach(x=>t+='  '+ord(x.half)+' '+fmt(x.at)+'  OUT '+x.out+'  IN '+x.in+'\n'); }
-    t += 'Minutes:\n'; Object.values(g.mins).sort((a,b)=>b.ms-a.ms).forEach(m=>t+='  '+m.name+': '+mins(m.ms)+' min\n');
+    t += 'Game time:\n'; Object.values(g.mins).sort((a,b)=>b.ms-a.ms).forEach(m=>t+='  '+m.name+': '+fmt(m.ms)+(Array.isArray(m.halves)?' ('+m.halves.map((v,k)=>ord(k+1)+' '+fmt(v)).join(', ')+')':'')+(m.start?' · started':'')+'\n');
+    if (g.subs){ t += 'Subs:'+(g.subs.length?'':' none')+'\n'; g.subs.forEach((x,n)=>t+='  '+(n+1)+'. '+ord(x.half)+' '+fmt(x.at)+(x.wall?' ('+new Date(x.wall).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'})+')':'')+'  OUT '+x.out+(x.outStint!=null?' (on '+fmt(x.outStint)+')':'')+'  IN '+x.in+(x.inBench!=null?' (sat '+fmt(x.inBench)+')':'')+'\n'); }
     return t;
   }
   function exportData(k){
     const H=S.history;
     if (k==='text') return H.map(gameText).join('\n') || 'No games yet.';
-    if (k==='mins'){ const rows=[['date','opponent','player','minutes','seconds']];
-      H.forEach(g=>Object.values(g.mins).forEach(m=>rows.push([dstr(g.date),g.opp||'',m.name,mins(m.ms),Math.round(m.ms/1000)])));
+    if (k==='mins'){ const rows=[['date','opponent','player','started','times_on','half1','half2','total','total_seconds','pct_of_game']];
+      H.forEach(g=>Object.values(g.mins).forEach(m=>rows.push([dstr(g.date),g.opp||'',m.name,m.start?'yes':'no',m.stints!=null?m.stints:'',
+        m.halves?fmt(m.halves[0]||0):'', m.halves?fmt(m.halves[1]||0):'', fmt(m.ms), Math.round(m.ms/1000), g.totalMs?Math.round(m.ms/g.totalMs*100):''])));
       return rows.map(csvRow).join('\n'); }
-    if (k==='subs'){ const rows=[['date','opponent','half','time_in_half','player_out','player_in']];
-      H.forEach(g=>(g.subs||[]).forEach(x=>rows.push([dstr(g.date),g.opp||'',x.half,fmt(x.at),x.out,x.in])));
+    if (k==='subs'){ const rows=[['date','opponent','sub_no','half','time_in_half','game_time','clock_time','player_out','out_was_on','player_in','in_had_sat']];
+      H.forEach(g=>(g.subs||[]).forEach((x,n)=>rows.push([dstr(g.date),g.opp||'',n+1,x.half,fmt(x.at),x.gameAt!=null?fmt(x.gameAt):'',
+        x.wall?new Date(x.wall).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}):'',x.out,x.outStint!=null?fmt(x.outStint):'',x.in,x.inBench!=null?fmt(x.inBench):''])));
       return rows.map(csvRow).join('\n'); }
     return JSON.stringify({ app:'gt7v7', version:2, exported:new Date().toISOString(), roster:S.roster, rules:S.rules||null, game:S.game||null, history:H }, null, 1);
   }
